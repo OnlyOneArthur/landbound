@@ -7,24 +7,28 @@ Landbound builds a throwaway fixture with one public and one private file, runs 
 This is a **policy design and experiment tool**, not a sandbox launcher and not an audit monitor.
 
 ```
-╭─ LANDBOUND ──────────────────────────────────────────────────────────────╮
-│  Landlock policy workbench                                               │
-╰──────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────────────────────────────────────────────────╮
-│ Fixture tree                Rules                                        │
-│ ├── public/                 read public/message.txt   ✓ always allowed   │
-│ │   └── message.txt         read private/secret.txt   ✗ DENIED (default) │
-│ └── private/                loopback TCP connect      ✗ DENIED (default) │
-│     └── secret.txt                                                       │
-╰──────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────────────────────────────────────────────────╮
-│ Result                                                                   │
-│ Landlock ABI 10                                                          │
-│ public/message.txt   ✓ success                                           │
-│ private/secret.txt   ✗ permission denied                                 │
-│ network: loopback connect denied — connect: permission denied            │
-╰──────────────────────────────────────────────────────────────────────────╯
-space toggle private-file rule • n toggle loopback network rule • enter run …
+
+  ╭─ Policy ─────────────────────────────────────────────────────────────────╮
+  │ space read private/secret.txt                                   ✗ DENIED │
+  │ n     connect loopback TCP                                      ✗ DENIED │
+  │                                                                          │
+  │ public/message.txt is always readable; it anchors the allowlist.         │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+  ╭─ Evidence ───────────────────────────────────────────────────────────────╮
+  │          baseline    restricted                                          │
+  │ ──────────────────────────────────────────────────────────────────────   │
+  │ public   ✓ success   ✓ success                                           │
+  │ private  ✓ success   ✗ permission denied                                 │
+  │ loopback ✓ connected ✗ permission denied                                 │
+  │                                                                          │
+  │ Landlock denied 2 of 3 attempts. The baseline shows the same operations  │
+  │ succeeding without the policy, so the denials are attributable to        │
+  │ Landlock.                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+  ────────────────────────────────────────────────────────────────────────────
+space toggle private-file rule • n toggle loopback network rule …
 ```
 
 The TUI is styled with [lipgloss](https://github.com/charmbracelet/lipgloss) and adapts to light and dark terminals, reflows on resize, and degrades safely on small terminals. A spinner tracks the in-flight run, and `?` opens a full help overlay.

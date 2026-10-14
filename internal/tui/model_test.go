@@ -141,7 +141,7 @@ func TestQuitKeys(t *testing.T) {
 
 func TestViewStates(t *testing.T) {
 	m := initialModel()
-	if v := m.View(); !strings.Contains(v, "not run yet") {
+	if v := m.View(); !strings.Contains(v, "Not run yet") {
 		t.Fatalf("initial view should prompt a run, got:\n%s", v)
 	}
 
@@ -179,13 +179,14 @@ func TestViewStates(t *testing.T) {
 		},
 		NetworkRestricted: &demo.NetResult{Target: "127.0.0.1:9", Error: "permission denied"},
 	}
-	if v := m.View(); !strings.Contains(v, "loopback connect denied") {
+	v = m.View()
+	if !strings.Contains(v, "loopback") || !strings.Contains(v, "permission denied") {
 		t.Fatalf("network denial should be surfaced, got:\n%s", v)
 	}
 
 	m = initialModel()
 	m.report = demo.Report{ABI: 2, NetworkSupported: false}
-	if v := m.View(); !strings.Contains(v, "network: unsupported") {
+	if v := m.View(); !strings.Contains(v, "ABI 4+") {
 		t.Fatalf("unsupported network scenario should be stated, got:\n%s", v)
 	}
 
@@ -209,7 +210,7 @@ func TestHelpToggle(t *testing.T) {
 	if m.showHelp {
 		t.Fatal("? should close help")
 	}
-	if v := m.View(); !strings.Contains(v, "Fixture tree") {
+	if v := m.View(); !strings.Contains(v, "Policy") {
 		t.Fatalf("closing help should return to the main view, got:\n%s", v)
 	}
 }
@@ -229,7 +230,7 @@ func TestViewNetworkRuleLabel(t *testing.T) {
 	m := initialModel()
 	// Before any run the kernel capability is unknown, so the view must not
 	// claim the rule is enforceable.
-	if v := m.View(); !strings.Contains(v, "unsupported on this kernel") {
+	if v := m.View(); !strings.Contains(v, "unknown") {
 		t.Fatalf("unrun view should not claim network support, got:\n%s", v)
 	}
 	m.report = demo.Report{ABI: 4, NetworkSupported: true}

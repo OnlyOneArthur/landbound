@@ -196,6 +196,69 @@ func TestAdaptivePaletteDefined(t *testing.T) {
 	}
 }
 
+// TestStateLabelNeverTruncates asserts the policy state label is semantic and
+// must survive at every width: a truncated "✗ DE" or "✗ DENIE" would read as
+// something other than a denial.
+func TestStateLabelNeverTruncates(t *testing.T) {
+	for _, w := range []int{80, 60, 48, 44, 40, 36, 32, 28} {
+		m := initialModel()
+		m.width, m.height = w, 30
+		v := m.View()
+		if !strings.Contains(v, "DENIED") {
+			t.Fatalf("width %d: private rule state was truncated:\n%s", w, v)
+		}
+	}
+}
+
+// TestNarrowEvidenceStacks asserts that below the threshold where a two-column
+// table stops fitting, each attempt is stacked so the baseline and restricted
+// results never collide in the same cells.
+func TestNarrowEvidenceStacks(t *testing.T) {
+	m := initialModel()
+	m.report = fullReport()
+	m.width, m.height = 32, 40
+	v := m.View()
+	if !strings.Contains(v, "base") || !strings.Contains(v, "restr") {
+		t.Fatalf("stacked layout should label each side:\n%s", v)
+	}
+	if strings.Contains(v, "baselinerestr") || strings.Contains(v, "succes✓") {
+		t.Fatalf("stacked layout collided columns:\n%s", v)
+	}
+}
+
+// TestReasonNeverTruncatesMidWord asserts a denial reason degrades to a shorter
+// whole word rather than a fragment like "permissi".
+func TestReasonNeverTruncatesMidWord(t *testing.T) {
+	cases := []struct {
+		w    int
+		want string
+	}{
+		{20, "permission denied"},
+		{12, "denied"},
+		{4, "no"},
+	}
+	for _, c := range cases {
+		if got := fitReason("permission denied", c.w); got != c.want {
+			t.Fatalf("fitReason(w=%d) = %q, want %q", c.w, got, c.want)
+		}
+	}
+}
+
+// TestShortErrKeepsTrailingReason asserts the wrapped Go error is reduced to the
+// operative reason so a narrow cell still says why it failed.
+func TestShortErrKeepsTrailingReason(t *testing.T) {
+	cases := map[string]string{
+		"open /tmp/x/private/secret.txt: permission denied":    "permission denied",
+		"dial tcp 127.0.0.1:34567: connect: permission denied": "permission denied",
+		"permission denied": "permission denied",
+	}
+	for in, want := range cases {
+		if got := shortErr(in); got != want {
+			t.Fatalf("shortErr(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 type viewState struct {
 	name   string
 	busy   bool
