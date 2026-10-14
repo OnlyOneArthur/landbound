@@ -19,7 +19,6 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
 }
-
 func update(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
 	t.Helper()
 	next, cmd := m.Update(msg)
@@ -45,12 +44,31 @@ func TestTogglePrivateRule(t *testing.T) {
 	}
 }
 
+func TestToggleNetworkRule(t *testing.T) {
+	m := initialModel()
+	if m.networkAllowed {
+		t.Fatal("network rule should start denied")
+	}
+	m, _ = update(t, m, key("n"))
+	if !m.networkAllowed {
+		t.Fatal("n should allow the network rule")
+	}
+	m, _ = update(t, m, key("n"))
+	if m.networkAllowed {
+		t.Fatal("n should deny the network rule again")
+	}
+}
+
 func TestToggleIgnoredWhileBusy(t *testing.T) {
 	m := initialModel()
 	m.busy = true
 	m, _ = update(t, m, key(" "))
 	if m.privateAllowed {
 		t.Fatal("space must not change the rule while a run is in flight")
+	}
+	m, _ = update(t, m, key("n"))
+	if m.networkAllowed {
+		t.Fatal("n must not change the rule while a run is in flight")
 	}
 }
 
@@ -151,6 +169,26 @@ func TestViewStates(t *testing.T) {
 		t.Fatalf("result view missing expected content, got:\n%s", v)
 	}
 
+	m = initialModel()
+	m.report = demo.Report{
+		ABI:              4,
+		NetworkSupported: true,
+		Restricted: []demo.ReadResult{
+			{Path: "public/message.txt", OK: true},
+			{Path: "private/secret.txt", Error: "permission denied"},
+		},
+		NetworkRestricted: &demo.NetResult{Target: "127.0.0.1:9", Error: "permission denied"},
+	}
+	if v := m.View(); !strings.Contains(v, "loopback connect denied") {
+		t.Fatalf("network denial should be surfaced, got:\n%s", v)
+	}
+
+	m = initialModel()
+	m.report = demo.Report{ABI: 2, NetworkSupported: false}
+	if v := m.View(); !strings.Contains(v, "network: unsupported") {
+		t.Fatalf("unsupported network scenario should be stated, got:\n%s", v)
+	}
+
 	m.quitting = true
 	if v := m.View(); strings.Contains(v, "LANDBOUND") {
 		t.Fatalf("quitting view should be blank, got:\n%s", v)
@@ -184,5 +222,22 @@ func TestViewPrivateRuleLabel(t *testing.T) {
 	m.privateAllowed = true
 	if v := m.View(); !strings.Contains(v, "ALLOWED") {
 		t.Fatalf("toggled view should show ALLOWED, got:\n%s", v)
+	}
+}
+
+func TestViewNetworkRuleLabel(t *testing.T) {
+	m := initialModel()
+	// Before any run the kernel capability is unknown, so the view must not
+	// claim the rule is enforceable.
+	if v := m.View(); !strings.Contains(v, "unsupported on this kernel") {
+		t.Fatalf("unrun view should not claim network support, got:\n%s", v)
+	}
+	m.report = demo.Report{ABI: 4, NetworkSupported: true}
+	if v := m.View(); !strings.Contains(v, "DENIED") {
+		t.Fatalf("supported view should show the denied network rule, got:\n%s", v)
+	}
+	m.networkAllowed = true
+	if v := m.View(); !strings.Contains(v, "ALLOWED") {
+		t.Fatalf("toggled network view should show ALLOWED, got:\n%s", v)
 	}
 }

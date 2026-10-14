@@ -47,19 +47,23 @@ func main() {
 }
 
 func runDemo(args []string) {
-	privateAllowed := false
+	policy := demo.Policy{}
 	for _, a := range args {
 		switch a {
 		case "--allow-private":
-			privateAllowed = true
+			policy.PrivateFileAllowed = true
 		case "--deny-private":
-			privateAllowed = false
+			policy.PrivateFileAllowed = false
+		case "--allow-net":
+			policy.NetworkAllowed = true
+		case "--deny-net":
+			policy.NetworkAllowed = false
 		default:
 			fmt.Fprintln(os.Stderr, "unknown demo flag:", a)
 			os.Exit(2)
 		}
 	}
-	report, err := demo.Run(context.Background(), privateAllowed)
+	report, err := demo.Run(context.Background(), policy)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "demo failed:", err)
 		os.Exit(1)
@@ -81,6 +85,11 @@ func runDoctor() {
 	}
 	fmt.Printf("Landlock ABI: %d\n", abi)
 	fmt.Println("filesystem read rules: available")
+	if landlock.SupportsNetwork(abi) {
+		fmt.Println("network connect rules: available (TCP connect)")
+	} else {
+		fmt.Printf("network connect rules: unavailable (needs ABI %d+, have %d)\n", landlock.MinNetworkABI, abi)
+	}
 	fmt.Println("note: Landlock reports access-denied to the operation, not a stream of every denied path.")
 }
 
@@ -89,12 +98,17 @@ func usage(w *os.File) {
 
 Usage:
   landbound            launch the interactive TUI
-  landbound demo [--allow-private]
+  landbound demo [--allow-private] [--allow-net]
   landbound doctor     report kernel Landlock support
   landbound help
 
 The demo builds a private temporary fixture, verifies an unrestricted baseline,
 then runs the bundled fixture under a Landlock allowlist and reports results.
 Only the bundled fixture runs; no arbitrary commands are accepted.
+
+The private file is denied unless --allow-private is given. On kernels with
+Landlock ABI 4+ the demo also attempts one loopback TCP connect, denied unless
+--allow-net is given; on older kernels that scenario is reported as
+unsupported rather than guessed.
 `)
 }

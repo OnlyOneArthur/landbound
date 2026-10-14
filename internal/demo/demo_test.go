@@ -36,7 +36,7 @@ func requireLandlock(t *testing.T) {
 
 func TestRunDenyPrivate(t *testing.T) {
 	requireLandlock(t)
-	report, err := Run(context.Background(), false)
+	report, err := Run(context.Background(), Policy{})
 	if err != nil {
 		t.Fatalf("Run(deny): %v", err)
 	}
@@ -67,7 +67,7 @@ func TestRunDenyPrivate(t *testing.T) {
 
 func TestRunAllowPrivate(t *testing.T) {
 	requireLandlock(t)
-	report, err := Run(context.Background(), true)
+	report, err := Run(context.Background(), Policy{PrivateFileAllowed: true})
 	if err != nil {
 		t.Fatalf("Run(allow): %v", err)
 	}
@@ -91,7 +91,7 @@ func TestParentNotRestricted(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("parent must still read this\n"), 0o600); err != nil {
 		t.Fatalf("write probe file: %v", err)
 	}
-	if _, err := Run(context.Background(), false); err != nil {
+	if _, err := Run(context.Background(), Policy{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	// The probe file was never in the allowlist, so a restricted parent could not
@@ -104,7 +104,7 @@ func TestParentNotRestricted(t *testing.T) {
 func TestRunFixtureCleanup(t *testing.T) {
 	requireLandlock(t)
 	before := countLandboundTempDirs(t)
-	if _, err := Run(context.Background(), false); err != nil {
+	if _, err := Run(context.Background(), Policy{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	after := countLandboundTempDirs(t)
@@ -133,6 +133,10 @@ func TestChildMainRejectsBadArguments(t *testing.T) {
 		{"same parent dir", []string{"/tmp/x/a.txt", "/tmp/x/b.txt"}, false},
 		{"unknown policy flag", []string{"/tmp/a/f", "/tmp/b/g", "sometimes"}, true},
 		{"missing policy flag", []string{"/tmp/a/f", "/tmp/b/g"}, true},
+		{"invalid port", []string{"/tmp/a/f", "/tmp/b/g", "deny-private", "70000", "net-allow"}, true},
+		{"unknown network flag", []string{"/tmp/a/f", "/tmp/b/g", "deny-private", "1234", "sometimes"}, true},
+		{"too many policy args", []string{"/tmp/a/f", "/tmp/b/g", "deny-private", "1234"}, true},
+		{"baseline invalid port", []string{"/tmp/a/f", "/tmp/b/g", "notaport"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,4 +202,68 @@ func TestLimitedBufferOverflow(t *testing.T) {
 	if !b.overflow {
 		t.Fatal("overflow flag should be set")
 	}
+}
+
+// TestRunNetworkDenied checks that a kernel which can enforce network rules
+// denies the loopback connect while still allowing the permitted public read.
+func TestRunNetworkDenied(t *testing.T) {
+	requireLandlock(t)
+	if !networkSupported(t) {
+		return
+	}
+	report, err := Run(context.Background(), Policy{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !report.NetworkSupported {
+		t.Fatal("report should mark network supported on this kernel")
+	}
+	if report.NetworkBaseline == nil || !report.NetworkBaseline.OK {
+		t.Fatalf("baseline connect should succeed: %+v", report.NetworkBaseline)
+	}
+	if report.NetworkRestricted == nil {
+		t.Fatal("restricted network result missing")
+	}
+	if report.NetworkRestricted.OK {
+		t.Fatal("loopback connect should be denied under net-deny policy")
+	}
+	if !strings.Contains(strings.ToLower(report.NetworkRestricted.Error), "permission denied") {
+		t.Fatalf("expected permission denied, got %q", report.NetworkRestricted.Error)
+	}
+	// Filesystem policy must be unaffected by the network rule.
+	if !report.Restricted[0].OK {
+		t.Fatalf("public read denied under policy: %s", report.Restricted[0].Error)
+	}
+}
+
+// TestRunNetworkAllowed checks the allow-net counterpart permits the connect.
+func TestRunNetworkAllowed(t *testing.T) {
+	requireLandlock(t)
+	if !networkSupported(t) {
+		return
+	}
+	report, err := Run(context.Background(), Policy{NetworkAllowed: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !report.NetworkAllowed {
+		t.Fatal("report should record network_allowed=true")
+	}
+	if report.NetworkRestricted == nil || !report.NetworkRestricted.OK {
+		t.Fatalf("loopback connect should be allowed, got %+v", report.NetworkRestricted)
+	}
+}
+
+// networkSupported reports whether this kernel can enforce network rules and
+// skips with an explicit reason when it cannot.
+func networkSupported(t *testing.T) bool {
+	t.Helper()
+	abi, err := landlock.ProbeABI()
+	if err != nil {
+		t.Skipf("landlock unsupported on this host: %v", err)
+	}
+	if !landlock.SupportsNetwork(abi) {
+		t.Skipf("kernel ABI %d lacks network rules (need %d+)", abi, landlock.MinNetworkABI)
+	}
+	return true
 }

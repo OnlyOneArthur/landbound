@@ -15,6 +15,7 @@ type resultMsg struct {
 
 type model struct {
 	privateAllowed bool
+	networkAllowed bool
 	busy           bool
 	showHelp       bool
 	report         demo.Report
@@ -39,12 +40,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.busy {
 				m.privateAllowed = !m.privateAllowed
 			}
+		case "n", "N":
+			if !m.busy {
+				m.networkAllowed = !m.networkAllowed
+			}
 		case "enter":
 			if !m.busy {
 				m.busy = true
-				allowed := m.privateAllowed
+				policy := demo.Policy{
+					PrivateFileAllowed: m.privateAllowed,
+					NetworkAllowed:     m.networkAllowed,
+				}
 				return m, func() tea.Msg {
-					r, err := demo.Run(context.Background(), allowed)
+					r, err := demo.Run(context.Background(), policy)
 					return resultMsg{report: r, err: err}
 				}
 			}
@@ -68,13 +76,20 @@ func (m model) View() string {
 	} else if m.err != nil {
 		status = "ERROR: " + m.err.Error()
 	} else if m.report.ABI > 0 {
-		pub := mark(m.report.Restricted[0])
-		priv := mark(m.report.Restricted[1])
-		status = fmt.Sprintf("Landlock ABI %d\nrestricted results: public %s | private %s", m.report.ABI, pub, priv)
+		status = fmt.Sprintf("Landlock ABI %d\nrestricted results: public %s | private %s",
+			m.report.ABI, restrictedMark(m.report, 0), restrictedMark(m.report, 1))
+		status += "\n" + networkStatus(m.report)
 	}
 	private := "DENIED (default)"
 	if m.privateAllowed {
 		private = "ALLOWED"
+	}
+	net := "unsupported on this kernel"
+	if m.report.NetworkSupported {
+		net = "DENIED (default)"
+		if m.networkAllowed {
+			net = "ALLOWED"
+		}
 	}
 	return fmt.Sprintf(`LANDBOUND
 
@@ -84,10 +99,12 @@ Fixture tree                 Rule
 └── private/
     └── secret.txt           %s
 
-[SPACE] toggle private rule   [ENTER] run fixture   [?] help   [Q] quit
+Loopback TCP connect         %s
+
+[SPACE] private rule   [N] network rule   [ENTER] run   [?] help   [Q] quit
 
 %s
-`, private, status)
+`, private, net, status)
 }
 
 func helpView() string {
@@ -99,19 +116,33 @@ What this does
   read. The public file is always allowed; the private file is denied unless
   you toggle the rule.
 
+  On kernels with Landlock ABI 4+ it also attempts one loopback TCP connect
+  and reports whether the network rule allowed or denied it. On older kernels
+  that scenario is reported as unsupported rather than guessed.
+
 Keys
   SPACE   toggle the private-file rule
-  ENTER   run the fixture under the current rule
+  N       toggle the loopback network rule
+  ENTER   run the fixture under the current rules
   ?       show or hide this help
   Q       quit
 
 What this is not
   Landlock restricts the launched child and its descendants. It does not
   monitor other processes and does not emit a stream of every denied access.
-  Results here prove specific read attempts on this kernel only.
+  Results here prove specific read and connect attempts on this kernel only.
 
 Press ? to return.
 `
+}
+
+// restrictedMark renders the read result at index i, tolerating a report that
+// carries no restricted results so the view can never panic on partial data.
+func restrictedMark(r demo.Report, i int) string {
+	if i >= len(r.Restricted) {
+		return "? not reported"
+	}
+	return mark(r.Restricted[i])
 }
 
 func mark(r demo.ReadResult) string {
@@ -122,4 +153,17 @@ func mark(r demo.ReadResult) string {
 		return "✗ " + r.Error
 	}
 	return "? not reported"
+}
+
+func networkStatus(r demo.Report) string {
+	if !r.NetworkSupported {
+		return fmt.Sprintf("network: unsupported (needs Landlock ABI %d+)", demo.MinNetworkABI)
+	}
+	if r.NetworkRestricted == nil {
+		return "network: not reported"
+	}
+	if r.NetworkRestricted.OK {
+		return "network: loopback connect succeeded (allowed)"
+	}
+	return "network: loopback connect denied — " + r.NetworkRestricted.Error
 }

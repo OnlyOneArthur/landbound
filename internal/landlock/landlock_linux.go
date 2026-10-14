@@ -26,6 +26,24 @@ const (
 	ABI1ReadRights = AccessFSReadFile | AccessFSReadDir
 )
 
+// Network access rights, available from ABI 4.
+const (
+	AccessNetBindTCP    = unix.LANDLOCK_ACCESS_NET_BIND_TCP
+	AccessNetConnectTCP = unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
+
+	// ABI4NetConnectRights is the connect-only network policy Landbound demonstrates.
+	ABI4NetConnectRights = AccessNetConnectTCP
+
+	// MinNetworkABI is the first ABI that supports network access control.
+	MinNetworkABI = 4
+
+	// landlockRuleNetPort is LANDLOCK_RULE_NET_PORT, the net-port rule type.
+	landlockRuleNetPort = 2
+)
+
+// SupportsNetwork reports whether an ABI can enforce Landlock network rules.
+func SupportsNetwork(abi int) bool { return abi >= MinNetworkABI }
+
 // ProbeABI checks supported Landlock ABI version without modifying security state.
 func ProbeABI() (int, error) {
 	r1, _, err := unix.Syscall(
@@ -43,10 +61,21 @@ func ProbeABI() (int, error) {
 	return int(r1), nil
 }
 
-// CreateRuleset creates a Landlock ruleset file descriptor handling specified filesystem rights.
+// CreateRuleset creates a Landlock ruleset file descriptor handling specified
+// filesystem rights only.
 func CreateRuleset(handledAccessFS uint64) (int, error) {
-	// ABI v1 prefix: later kernel fields must not be required by older kernels.
-	attr := struct{ HandledAccessFS uint64 }{handledAccessFS}
+	return CreateRulesetWithNet(handledAccessFS, 0)
+}
+
+// CreateRulesetWithNet creates a ruleset handling both filesystem and network
+// rights. handledAccessNet must be zero on kernels older than ABI 4.
+func CreateRulesetWithNet(handledAccessFS, handledAccessNet uint64) (int, error) {
+	// Prefix layout shared by ABI v1+: unknown trailing fields stay zero, so
+	// older kernels accept the struct and reject any unsupported right.
+	attr := struct {
+		HandledAccessFS  uint64
+		HandledAccessNet uint64
+	}{handledAccessFS, handledAccessNet}
 	r1, _, err := unix.Syscall(
 		unix.SYS_LANDLOCK_CREATE_RULESET,
 		uintptr(unsafe.Pointer(&attr)),
@@ -84,6 +113,29 @@ func AddPathRule(rulesetFD int, path string, allowedAccess uint64) error {
 	)
 	if sysErr != 0 {
 		return fmt.Errorf("add landlock path rule for %s: %w", path, sysErr)
+	}
+	return nil
+}
+
+// AddNetPortRule allows one TCP port for the given network access rights
+// (ABI 4+). Omitting a port rule denies every connection to it.
+func AddNetPortRule(rulesetFD int, port uint64, allowedAccess uint64) error {
+	if port > 65535 {
+		return fmt.Errorf("%w: port %d out of range", ErrInvalidRule, port)
+	}
+	attr := struct {
+		AllowedAccess uint64
+		Port          uint64
+	}{AllowedAccess: allowedAccess, Port: port}
+	_, _, sysErr := unix.Syscall6(
+		unix.SYS_LANDLOCK_ADD_RULE,
+		uintptr(rulesetFD),
+		uintptr(landlockRuleNetPort),
+		uintptr(unsafe.Pointer(&attr)),
+		0, 0, 0,
+	)
+	if sysErr != 0 {
+		return fmt.Errorf("add landlock net rule for port %d: %w", port, sysErr)
 	}
 	return nil
 }
