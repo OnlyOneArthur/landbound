@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/OnlyOneArthur/landbound/internal/demo"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// resultMsg carries the outcome of one fixture run back into the update loop.
 type resultMsg struct {
 	report demo.Report
 	err    error
@@ -21,149 +23,85 @@ type model struct {
 	report         demo.Report
 	err            error
 	quitting       bool
+
+	// width and height come from tea.WindowSizeMsg. Until the first one
+	// arrives they are zero and the view falls back to a default width.
+	width  int
+	height int
+
+	spin spinner.Model
+	help help.Model
+	keys keyMap
 }
 
-func initialModel() model { return model{} }
+func initialModel() model {
+	return model{
+		spin: newSpinner(),
+		help: newHelp(),
+		keys: defaultKeyMap(),
+	}
+}
 
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.help.Width = msg.Width
+		return m, nil
 	case resultMsg:
 		m.busy, m.report, m.err = false, msg.report, msg.err
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-		case " ":
-			if !m.busy {
-				m.privateAllowed = !m.privateAllowed
-			}
-		case "n", "N":
-			if !m.busy {
-				m.networkAllowed = !m.networkAllowed
-			}
-		case "enter":
-			if !m.busy {
-				m.busy = true
-				policy := demo.Policy{
-					PrivateFileAllowed: m.privateAllowed,
-					NetworkAllowed:     m.networkAllowed,
-				}
-				return m, func() tea.Msg {
-					r, err := demo.Run(context.Background(), policy)
-					return resultMsg{report: r, err: err}
-				}
-			}
-		case "?":
-			m.showHelp = !m.showHelp
+		return m, nil
+	case spinner.TickMsg:
+		// Only keep the spinner animation alive while a run is in flight, so
+		// the tick chain ends on its own once the result arrives.
+		if !m.busy {
+			return m, nil
 		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+	case tea.KeyMsg:
+		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m model) View() string {
-	if m.quitting {
-		return "\n"
-	}
-	if m.showHelp {
-		return helpView()
-	}
-	status := "not run yet — press enter"
-	if m.busy {
-		status = "running fixture…"
-	} else if m.err != nil {
-		status = "ERROR: " + m.err.Error()
-	} else if m.report.ABI > 0 {
-		status = fmt.Sprintf("Landlock ABI %d\nrestricted results: public %s | private %s",
-			m.report.ABI, restrictedMark(m.report, 0), restrictedMark(m.report, 1))
-		status += "\n" + networkStatus(m.report)
-	}
-	private := "DENIED (default)"
-	if m.privateAllowed {
-		private = "ALLOWED"
-	}
-	net := "unsupported on this kernel"
-	if m.report.NetworkSupported {
-		net = "DENIED (default)"
-		if m.networkAllowed {
-			net = "ALLOWED"
+func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case " ":
+		if !m.busy {
+			m.privateAllowed = !m.privateAllowed
 		}
+	case "n", "N":
+		if !m.busy {
+			m.networkAllowed = !m.networkAllowed
+		}
+	case "enter":
+		if !m.busy {
+			m.busy = true
+			m.report = demo.Report{}
+			m.err = nil
+			policy := demo.Policy{
+				PrivateFileAllowed: m.privateAllowed,
+				NetworkAllowed:     m.networkAllowed,
+			}
+			return m, tea.Batch(m.spin.Tick, runFixture(policy))
+		}
+	case "?":
+		m.showHelp = !m.showHelp
 	}
-	return fmt.Sprintf(`LANDBOUND
-
-Fixture tree                 Rule
-├── public/
-│   └── message.txt          ✓ read
-└── private/
-    └── secret.txt           %s
-
-Loopback TCP connect         %s
-
-[SPACE] private rule   [N] network rule   [ENTER] run   [?] help   [Q] quit
-
-%s
-`, private, net, status)
+	return m, nil
 }
 
-func helpView() string {
-	return `LANDBOUND — help
-
-What this does
-  Builds a temporary fixture with a public and a private file, then runs a
-  bundled child process under a Landlock allowlist and reports what it could
-  read. The public file is always allowed; the private file is denied unless
-  you toggle the rule.
-
-  On kernels with Landlock ABI 4+ it also attempts one loopback TCP connect
-  and reports whether the network rule allowed or denied it. On older kernels
-  that scenario is reported as unsupported rather than guessed.
-
-Keys
-  SPACE   toggle the private-file rule
-  N       toggle the loopback network rule
-  ENTER   run the fixture under the current rules
-  ?       show or hide this help
-  Q       quit
-
-What this is not
-  Landlock restricts the launched child and its descendants. It does not
-  monitor other processes and does not emit a stream of every denied access.
-  Results here prove specific read and connect attempts on this kernel only.
-
-Press ? to return.
-`
-}
-
-// restrictedMark renders the read result at index i, tolerating a report that
-// carries no restricted results so the view can never panic on partial data.
-func restrictedMark(r demo.Report, i int) string {
-	if i >= len(r.Restricted) {
-		return "? not reported"
+// runFixture runs the bundled fixture off the update loop and reports back.
+func runFixture(policy demo.Policy) tea.Cmd {
+	return func() tea.Msg {
+		r, err := demo.Run(context.Background(), policy)
+		return resultMsg{report: r, err: err}
 	}
-	return mark(r.Restricted[i])
-}
-
-func mark(r demo.ReadResult) string {
-	if r.OK {
-		return "✓ success"
-	}
-	if r.Error != "" {
-		return "✗ " + r.Error
-	}
-	return "? not reported"
-}
-
-func networkStatus(r demo.Report) string {
-	if !r.NetworkSupported {
-		return fmt.Sprintf("network: unsupported (needs Landlock ABI %d+)", demo.MinNetworkABI)
-	}
-	if r.NetworkRestricted == nil {
-		return "network: not reported"
-	}
-	if r.NetworkRestricted.OK {
-		return "network: loopback connect succeeded (allowed)"
-	}
-	return "network: loopback connect denied — " + r.NetworkRestricted.Error
 }

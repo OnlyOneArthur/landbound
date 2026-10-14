@@ -7,22 +7,27 @@ Landbound builds a throwaway fixture with one public and one private file, runs 
 This is a **policy design and experiment tool**, not a sandbox launcher and not an audit monitor.
 
 ```
-LANDBOUND
-
-Fixture tree                 Rule
-├── public/
-│   └── message.txt          ✓ read
-└── private/
-    └── secret.txt           DENIED (default)
-
-Loopback TCP connect         DENIED (default)
-
-[SPACE] private rule   [N] network rule   [ENTER] run   [?] help   [Q] quit
-
-Landlock ABI 10
-restricted results: public ✓ success | private ✗ permission denied
-network: loopback connect denied — connect: permission denied
+╭─ LANDBOUND ──────────────────────────────────────────────────────────────╮
+│  Landlock policy workbench                                               │
+╰──────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────╮
+│ Fixture tree                Rules                                        │
+│ ├── public/                 read public/message.txt   ✓ always allowed   │
+│ │   └── message.txt         read private/secret.txt   ✗ DENIED (default) │
+│ └── private/                loopback TCP connect      ✗ DENIED (default) │
+│     └── secret.txt                                                       │
+╰──────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────╮
+│ Result                                                                   │
+│ Landlock ABI 10                                                          │
+│ public/message.txt   ✓ success                                           │
+│ private/secret.txt   ✗ permission denied                                 │
+│ network: loopback connect denied — connect: permission denied            │
+╰──────────────────────────────────────────────────────────────────────────╯
+space toggle private-file rule • n toggle loopback network rule • enter run …
 ```
+
+The TUI is styled with [lipgloss](https://github.com/charmbracelet/lipgloss) and adapts to light and dark terminals, reflows on resize, and degrades safely on small terminals. A spinner tracks the in-flight run, and `?` opens a full help overlay.
 
 ## Requirements
 
