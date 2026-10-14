@@ -242,15 +242,19 @@ func (m model) resultLines() []string {
 
 func (m model) renderHelp() string {
 	w := m.contentWidth()
+	// Every line here is kept short enough to fit inside the box at the
+	// default width; lipgloss word-wraps anything longer, which looks broken.
 	body := strings.Join([]string{
 		titleStyle.Render("LANDBOUND — help"),
 		"",
 		sectionStyle.Render("What this does"),
-		"  Runs a bundled child under a Landlock allowlist and reports what it",
-		"  could read. Public is always allowed; private is denied unless you",
-		"  toggle the rule. On ABI 4+ it also attempts one loopback TCP connect,",
-		"  allowed or denied by the network rule; older kernels report that",
-		"  scenario as unsupported rather than guessing.",
+		"  Runs a bundled child under a Landlock allowlist and",
+		"  reports what it could read. Public is always allowed;",
+		"  private is denied unless you toggle the rule.",
+		"",
+		"  On ABI 4+ it also attempts one loopback TCP connect,",
+		"  allowed or denied by the network rule. Older kernels",
+		"  report that scenario as unsupported rather than guessing.",
 		"",
 		sectionStyle.Render("Keys"),
 		"  " + keyStyle.Render("SPACE") + "  toggle private-file rule",
@@ -260,8 +264,9 @@ func (m model) renderHelp() string {
 		"  " + keyStyle.Render("Q") + "      quit",
 		"",
 		sectionStyle.Render("What this is not"),
-		"  Landlock restricts the launched child, not other processes, and emits",
-		"  no per-denial stream. Results prove attempts on this kernel only.",
+		"  Landlock restricts the launched child, not other",
+		"  processes, and emits no per-denial stream. Results",
+		"  prove attempts on this kernel only.",
 	}, "\n")
 	return boxStyle.Width(w - 4).Render(body)
 }
